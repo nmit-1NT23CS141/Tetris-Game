@@ -1,0 +1,1070 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Tetris + AI Bot + Hints + Move Scores</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --cyan:   #00e5ff;
+      --purple: #a855f7;
+      --green:  #2de8b8;
+      --yellow: #ffd600;
+      --dark:   #050510;
+      --card:   #0d0d22;
+    }
+    body {
+      background: var(--dark);
+      font-family: 'Courier New', monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    #bg-canvas { position:fixed; inset:0; z-index:0; pointer-events:none; }
+ 
+    /* ── ANIMATIONS ─────────────────────────── */
+    @keyframes fadeIn  { from{opacity:0;transform:translateY(24px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes fadeOut { from{opacity:1;transform:scale(1)} to{opacity:0;transform:scale(0.92)} }
+    @keyframes slideIn { from{opacity:0;transform:translateY(-20px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes hintPop { 0%{transform:scale(0.7) translateX(-50%);opacity:0} 60%{transform:scale(1.08) translateX(-50%)} 100%{transform:scale(1) translateX(-50%);opacity:1} }
+    @keyframes hintGlow { 0%,100%{box-shadow:0 0 10px rgba(255,214,0,0.35)} 50%{box-shadow:0 0 24px rgba(255,214,0,0.8)} }
+    @keyframes blink { 0%,100%{opacity:1;transform:translateY(0)} 50%{opacity:.4;transform:translateY(-5px)} }
+    @keyframes movesSlide { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+ 
+    /* ── ENTRY SCREEN ───────────────────────── */
+    #entry-screen { position:relative; z-index:10; width:360px; animation:fadeIn 0.6s ease; }
+    .entry-logo { text-align:center; margin-bottom:26px; }
+    .entry-logo .big {
+      font-size:52px; font-weight:900; letter-spacing:14px; color:#fff; display:block;
+      text-shadow: 0 0 20px rgba(0,229,255,0.6), 0 0 60px rgba(0,229,255,0.2);
+    }
+    .entry-logo .sub { font-size:11px; letter-spacing:4px; color:var(--cyan); display:block; margin-top:4px; opacity:.8; }
+ 
+    .block-row { display:flex; justify-content:center; gap:5px; margin-bottom:22px; }
+    .deco-block { width:20px; height:20px; border-radius:3px; animation:blink 2s infinite; }
+    .deco-block:nth-child(1){background:#E84040;animation-delay:0s}
+    .deco-block:nth-child(2){background:#E89A00;animation-delay:.2s}
+    .deco-block:nth-child(3){background:#E8D400;animation-delay:.4s}
+    .deco-block:nth-child(4){background:#40C456;animation-delay:.6s}
+    .deco-block:nth-child(5){background:#40B4E8;animation-delay:.8s}
+    .deco-block:nth-child(6){background:#4060E8;animation-delay:1s}
+    .deco-block:nth-child(7){background:#C040E8;animation-delay:1.2s}
+ 
+    .entry-card {
+      background:var(--card); border:1px solid #1e1e44; border-radius:16px;
+      padding:26px 24px;
+      box-shadow: 0 0 0 1px rgba(0,229,255,0.05), 0 20px 60px rgba(0,0,0,0.6);
+    }
+    .entry-card h2 { font-size:12px; letter-spacing:3px; color:#555588; text-transform:uppercase; margin-bottom:18px; text-align:center; }
+ 
+    .field { margin-bottom:13px; }
+    .field label { display:block; font-size:10px; letter-spacing:2px; color:#555588; text-transform:uppercase; margin-bottom:5px; }
+    .field input {
+      width:100%; background:#080818; border:1px solid #1e1e44; border-radius:8px;
+      color:#fff; font-family:'Courier New',monospace; font-size:14px;
+      padding:10px 13px; outline:none; transition:border-color .2s,box-shadow .2s;
+    }
+    .field input:focus { border-color:var(--cyan); box-shadow:0 0 0 3px rgba(0,229,255,0.08); }
+    .field input::placeholder { color:#333355; }
+ 
+    .pill-row { display:flex; gap:7px; margin-top:5px; }
+    .pill {
+      flex:1; padding:7px 0; border:1px solid #1e1e44; border-radius:8px;
+      background:transparent; color:#555588; font-family:'Courier New',monospace;
+      font-size:11px; letter-spacing:1px; cursor:pointer; text-align:center;
+      text-transform:uppercase; transition:all .15s;
+    }
+    .pill.selected { border-color:var(--cyan); color:var(--cyan); background:rgba(0,229,255,0.07); }
+ 
+    .toggle-row {
+      display:flex; align-items:center; justify-content:space-between;
+      background:#080818; border:1px solid #1e1e44; border-radius:8px;
+      padding:9px 13px; margin-bottom:12px;
+    }
+    .toggle-row span { font-size:12px; color:#8888bb; letter-spacing:1px; }
+    .toggle-switch { position:relative; width:42px; height:22px; }
+    .toggle-switch input { opacity:0; width:0; height:0; }
+    .toggle-slider { position:absolute; inset:0; background:#1a1a3a; border-radius:22px; cursor:pointer; transition:background .2s; }
+    .toggle-slider::before { content:''; position:absolute; width:16px; height:16px; left:3px; top:3px; background:#555; border-radius:50%; transition:all .2s; }
+    .toggle-switch input:checked + .toggle-slider { background:rgba(0,229,255,0.2); border:1px solid var(--cyan); }
+    .toggle-switch input:checked + .toggle-slider::before { transform:translateX(20px); background:var(--cyan); }
+ 
+    #play-btn {
+      width:100%; padding:13px; background:linear-gradient(135deg,#0033aa,#6600cc);
+      border:none; border-radius:10px; color:#fff; font-family:'Courier New',monospace;
+      font-size:14px; font-weight:700; letter-spacing:4px; text-transform:uppercase;
+      cursor:pointer; transition:opacity .15s,transform .1s;
+      box-shadow:0 4px 24px rgba(100,0,200,0.3); margin-top:2px;
+    }
+    #play-btn:hover { opacity:.88; transform:translateY(-1px); }
+    #play-btn:active { transform:translateY(0); }
+    #entry-error { font-size:11px; color:#ff4466; text-align:center; margin-top:9px; min-height:15px; letter-spacing:1px; }
+ 
+    /* ── WELCOME BADGE ─────────────────────── */
+    #welcome-badge {
+      position:fixed; top:12px; right:14px; z-index:100;
+      background:#0d0d22; border:1px solid #1e1e44; border-radius:8px;
+      padding:5px 11px; font-size:11px; color:#666699; letter-spacing:1px;
+      display:none; animation:slideIn .4s ease;
+    }
+    #welcome-badge b { color:var(--cyan); }
+ 
+    /* ── HINT TOAST ────────────────────────── */
+    #hint-toast {
+      position:fixed; top:56px; left:50%; transform:translateX(-50%);
+      z-index:999; display:none;
+      background:#1a1200; border:1.5px solid var(--yellow);
+      border-radius:10px; padding:7px 18px;
+      font-size:12px; letter-spacing:1px; color:var(--yellow);
+      box-shadow:0 0 20px rgba(255,214,0,0.3);
+      white-space:nowrap;
+    }
+ 
+    /* ── GAME SCREEN ──────────────────────── */
+    #game-screen { display:none; position:relative; z-index:10; animation:slideIn .5s ease; }
+    h1 {
+      text-align:center; font-size:20px; font-weight:700; letter-spacing:8px;
+      color:#fff; text-transform:uppercase; margin-bottom:10px;
+      text-shadow:0 0 20px rgba(0,229,255,0.3);
+    }
+    #app { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+ 
+    #board-wrap { position:relative; }
+    canvas#board { border:2px solid #1a1a44; background:#06060f; display:block; box-shadow:0 0 40px rgba(60,60,220,0.18); }
+ 
+    #overlay {
+      position:absolute; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center;
+      background:rgba(0,0,0,0.82); gap:10px;
+    }
+    #overlay-title { font-size:20px; font-weight:700; letter-spacing:5px; color:#fff; text-transform:uppercase; }
+    #overlay-sub   { font-size:11px; letter-spacing:2px; color:rgba(255,255,255,0.5); text-transform:uppercase; }
+ 
+    .mobile-controls { display:flex; gap:7px; flex-wrap:wrap; justify-content:center; margin-top:6px; }
+    .mc-btn {
+      width:48px; height:42px; border:1px solid #22224a; border-radius:8px;
+      background:#10101e; color:#fff; font-size:16px; cursor:pointer;
+      display:flex; align-items:center; justify-content:center; transition:background .1s;
+    }
+    .mc-btn:hover { background:#1a1a36; }
+    .mc-btn:disabled { opacity:.3; cursor:not-allowed; }
+ 
+    /* ── SIDE PANEL ───────────────────────── */
+    #side { display:flex; flex-direction:column; gap:9px; min-width:148px; }
+    .panel { background:#0d0d20; border:1px solid #1a1a3a; border-radius:8px; padding:8px 11px; }
+    .panel-label { font-size:10px; letter-spacing:2px; color:#555588; text-transform:uppercase; margin-bottom:3px; }
+    .panel-val   { font-size:20px; font-weight:700; color:#fff; font-family:'Courier New',monospace; }
+    canvas#preview { display:block; background:#06060f; border:1px solid #1a1a3a; border-radius:4px; margin-top:4px; }
+ 
+    #btn-wrap { display:flex; flex-direction:column; gap:6px; }
+    .gbtn {
+      border:1px solid #222250; border-radius:8px; background:transparent;
+      color:#fff; font-family:'Courier New',monospace; font-size:11px;
+      letter-spacing:1px; padding:7px 10px; cursor:pointer;
+      text-transform:uppercase; transition:background .1s; width:100%;
+    }
+    .gbtn:hover { background:#161630; }
+    .gbtn:disabled { opacity:.35; cursor:not-allowed; }
+    #btn-ai { border-color:#1a6655; color:#2de8b8; }
+    #btn-ai.active { background:#0d3028; border-color:#2de8b8; box-shadow:0 0 10px rgba(45,232,184,0.2); }
+ 
+    /* HINT BUTTON */
+    #btn-hint { border-color:#554400; color:var(--yellow); position:relative; transition:all .2s; }
+    #btn-hint:hover { background:#1a1200; }
+    #btn-hint.active { background:#1a1200; border-color:var(--yellow); box-shadow:0 0 14px rgba(255,214,0,0.35); animation:hintGlow 1.5s infinite; }
+    #btn-hint:disabled { opacity:.3; cursor:not-allowed; animation:none; }
+    #hint-badge {
+      position:absolute; top:-5px; right:-5px;
+      background:var(--yellow); color:#000;
+      width:16px; height:16px; border-radius:50%;
+      font-size:10px; font-weight:900;
+      display:flex; align-items:center; justify-content:center;
+    }
+ 
+    /* MOVES BUTTON */
+    #btn-moves { border-color:#2a1a55; color:#a88fff; position:relative; transition:all .2s; }
+    #btn-moves:hover { background:#12082a; }
+    #btn-moves.active { background:#12082a; border-color:#a88fff; box-shadow:0 0 12px rgba(168,143,255,0.3); }
+    #btn-moves:disabled { opacity:.3; cursor:not-allowed; }
+ 
+    /* ── AI PANEL ─────────────────────────── */
+    #ai-panel { background:#080818; border:1px solid #1a1a3a; border-radius:8px; padding:8px 10px; font-size:10px; color:#444466; line-height:1.8; }
+    #ai-panel .ai-title { font-size:10px; letter-spacing:2px; color:#2de8b8; text-transform:uppercase; margin-bottom:4px; }
+    .ai-stat { display:flex; justify-content:space-between; }
+    .ai-stat span { color:#888899; }
+    .ai-stat b    { color:#ccd; }
+    #speed-row { display:flex; align-items:center; gap:6px; margin-top:4px; }
+    #speed-row label { font-size:10px; color:#555577; white-space:nowrap; }
+    #speed-slider { flex:1; accent-color:#2de8b8; }
+ 
+    /* ── MOVES PANEL ────────────────────────── */
+    #moves-panel {
+      background:#08081a;
+      border:1px solid #2a1a55;
+      border-radius:8px;
+      padding:8px 10px;
+      display:none;
+      animation:movesSlide 0.25s ease;
+      max-height:220px;
+      overflow-y:auto;
+    }
+    #moves-panel::-webkit-scrollbar { width:3px; }
+    #moves-panel::-webkit-scrollbar-track { background:#08081a; }
+    #moves-panel::-webkit-scrollbar-thumb { background:#2a1a55; border-radius:2px; }
+ 
+    .moves-title {
+      font-size:10px; letter-spacing:2px; color:#a88fff;
+      text-transform:uppercase; margin-bottom:6px;
+      display:flex; justify-content:space-between; align-items:center;
+    }
+    .moves-title span { color:#555566; font-size:9px; letter-spacing:0; }
+ 
+    .move-row {
+      display:flex; align-items:center; gap:6px;
+      padding:3px 0; border-bottom:1px solid #12122a;
+      cursor:pointer; transition:background .1s; border-radius:3px;
+    }
+    .move-row:last-child { border-bottom:none; }
+    .move-row:hover { background:rgba(168,143,255,0.07); }
+ 
+    .move-rank {
+      font-size:9px; font-weight:700; color:#555577;
+      min-width:14px; text-align:center;
+    }
+    .move-rank.best { color:#ffd600; }
+    .move-rank.rank2 { color:#aaa; }
+    .move-rank.rank3 { color:#c09060; }
+ 
+    .move-bar-wrap {
+      flex:1; height:6px; background:#10102a; border-radius:3px; overflow:hidden;
+    }
+    .move-bar { height:100%; border-radius:3px; transition:width .3s; }
+ 
+    .move-score {
+      font-size:9px; font-family:'Courier New',monospace;
+      min-width:36px; text-align:right;
+    }
+    .move-label {
+      font-size:9px; color:#666688; min-width:56px; text-align:right;
+      white-space:nowrap;
+    }
+ 
+    /* Colour swatch for the move's rotation */
+    .move-swatch {
+      width:8px; height:8px; border-radius:2px; flex-shrink:0;
+    }
+ 
+    #keys { font-size:10px; color:#444466; line-height:1.9; }
+    #keys span { color:#666688; font-weight:600; }
+    #level-badge { font-size:10px; letter-spacing:2px; color:#444466; text-transform:uppercase; text-align:center; }
+    #level-badge b { color:#6666cc; }
+  </style>
+</head>
+<body>
+ 
+<canvas id="bg-canvas"></canvas>
+<div id="welcome-badge">👤 Playing as: <b id="badge-name"></b></div>
+<div id="hint-toast"></div>
+ 
+<!-- ═══════════════ ENTRY SCREEN ═══════════════ -->
+<div id="entry-screen">
+  <div class="entry-logo">
+    <span class="big">TETRIS</span>
+    <span class="sub">AI-Powered Edition</span>
+  </div>
+  <div class="block-row">
+    <div class="deco-block"></div><div class="deco-block"></div>
+    <div class="deco-block"></div><div class="deco-block"></div>
+    <div class="deco-block"></div><div class="deco-block"></div>
+    <div class="deco-block"></div>
+  </div>
+  <div class="entry-card">
+    <h2>Enter to Play</h2>
+    <div class="field">
+      <label>Player Name</label>
+      <input type="text" id="inp-name" placeholder="e.g. Player One" maxlength="20" autocomplete="off"/>
+    </div>
+    <div class="field">
+      <label>Difficulty</label>
+      <div class="pill-row" id="diff-pills">
+        <button class="pill" data-d="1">Easy</button>
+        <button class="pill selected" data-d="3">Normal</button>
+        <button class="pill" data-d="6">Hard</button>
+        <button class="pill" data-d="10">Expert</button>
+      </div>
+    </div>
+    <div class="toggle-row">
+      <span>🤖 Start with AI Bot</span>
+      <label class="toggle-switch">
+        <input type="checkbox" id="ai-toggle-entry"/>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <button id="play-btn" onclick="enterGame()">▶ &nbsp; Play Now</button>
+    <div id="entry-error"></div>
+  </div>
+</div>
+ 
+<!-- ═══════════════ GAME SCREEN ═══════════════ -->
+<div id="game-screen">
+  <h1>Tetris</h1>
+  <div id="app">
+ 
+    <div id="game-wrap" style="display:flex;flex-direction:column;align-items:center;gap:7px">
+      <div id="board-wrap">
+        <canvas id="board" width="240" height="480"></canvas>
+        <div id="overlay">
+          <div id="overlay-title">TETRIS</div>
+          <div id="overlay-sub">Press Start</div>
+        </div>
+      </div>
+      <div class="mobile-controls">
+        <button class="mc-btn" id="mc-left">&#8592;</button>
+        <button class="mc-btn" id="mc-down">&#8595;</button>
+        <button class="mc-btn" id="mc-right">&#8594;</button>
+        <button class="mc-btn" id="mc-rot" style="font-size:11px">ROT</button>
+        <button class="mc-btn" id="mc-drop" style="font-size:11px">DROP</button>
+      </div>
+    </div>
+ 
+    <div id="side">
+      <div class="panel"><div class="panel-label">Score</div><div class="panel-val" id="score-val">0</div></div>
+      <div class="panel"><div class="panel-label">Lines</div><div class="panel-val" id="lines-val">0</div></div>
+      <div class="panel">
+        <div class="panel-label">Next</div>
+        <canvas id="preview" width="112" height="88"></canvas>
+      </div>
+ 
+      <div id="btn-wrap">
+        <button class="gbtn" id="btn-start"  onclick="startGame()">&#9654; Start</button>
+        <button class="gbtn" id="btn-pause"  onclick="togglePause()" disabled>&#9646;&#9646; Pause</button>
+        <button class="gbtn" id="btn-ai"     onclick="toggleAI()">&#129302; AI: OFF</button>
+        <button class="gbtn" id="btn-hint"   onclick="requestHint()" disabled>
+          💡 AI Hint <span id="hint-badge">3</span>
+        </button>
+        <button class="gbtn" id="btn-moves"  onclick="toggleMoves()" disabled>
+          📊 All Moves
+        </button>
+        <button class="gbtn" style="border-color:#442244;color:#aa88cc;font-size:10px" onclick="goBack()">&#8592; Menu</button>
+      </div>
+ 
+      <!-- AI INFO -->
+      <div id="ai-panel">
+        <div class="ai-title">&#129302; AI Engine</div>
+        <div class="ai-stat"><span>Mode</span><b id="ai-mode-lbl">Manual</b></div>
+        <div class="ai-stat"><span>Algorithm</span><b>Greedy</b></div>
+        <div class="ai-stat"><span>Hints Left</span><b id="ai-hints-left">3</b></div>
+        <div class="ai-stat"><span>Moves/s</span><b id="ai-mps">—</b></div>
+        <div id="speed-row">
+          <label>AI Speed</label>
+          <input type="range" id="speed-slider" min="50" max="800" value="220" step="10">
+        </div>
+      </div>
+ 
+      <!-- ALL MOVES PANEL -->
+      <div id="moves-panel">
+        <div class="moves-title">
+          📊 All Possible Moves
+          <span id="moves-count">— moves</span>
+        </div>
+        <div id="moves-list"></div>
+      </div>
+ 
+      <div id="keys">
+        <span>← →</span> Move<br>
+        <span>↑ / X</span> Rotate<br>
+        <span>↓</span> Soft drop<br>
+        <span>Space</span> Hard drop<br>
+        <span>H</span> Hint (×3) &nbsp;<span>M</span> Moves<br>
+        <span>P</span> Pause &nbsp;<span>A</span> AI
+      </div>
+      <div id="level-badge">Level <b id="level-val">1</b></div>
+    </div>
+  </div>
+</div>
+ 
+<script>
+// ══════════════════════════════════════════
+// BACKGROUND ANIMATION
+// ══════════════════════════════════════════
+(function(){
+  const cv=document.getElementById('bg-canvas');
+  const cx=cv.getContext('2d');
+  const PC=['#E84040','#E89A00','#E8D400','#40C456','#40B4E8','#4060E8','#C040E8'];
+  let W,H,blocks=[];
+  function resize(){W=cv.width=window.innerWidth;H=cv.height=window.innerHeight;}
+  window.addEventListener('resize',resize);resize();
+  for(let i=0;i<22;i++) blocks.push({
+    x:Math.random()*window.innerWidth,y:Math.random()*window.innerHeight,
+    size:14+Math.random()*20,speed:0.3+Math.random()*0.8,
+    color:PC[i%PC.length],alpha:0.06+Math.random()*0.1,
+    rot:Math.random()*Math.PI*2,rotSpeed:(Math.random()-0.5)*0.01
+  });
+  function draw(){
+    cx.clearRect(0,0,W,H);
+    blocks.forEach(b=>{
+      b.y+=b.speed;b.rot+=b.rotSpeed;
+      if(b.y>H+40){b.y=-40;b.x=Math.random()*W;}
+      cx.save();cx.translate(b.x+b.size/2,b.y+b.size/2);cx.rotate(b.rot);
+      cx.globalAlpha=b.alpha;cx.fillStyle=b.color;
+      cx.fillRect(-b.size/2,-b.size/2,b.size,b.size);cx.restore();
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+ 
+// ══════════════════════════════════════════
+// ENTRY SCREEN
+// ══════════════════════════════════════════
+let selectedDiff=3;
+document.querySelectorAll('.pill').forEach(p=>{
+  p.addEventListener('click',()=>{
+    document.querySelectorAll('.pill').forEach(x=>x.classList.remove('selected'));
+    p.classList.add('selected'); selectedDiff=Number(p.dataset.d);
+  });
+});
+ 
+function enterGame(){
+  const name=document.getElementById('inp-name').value.trim();
+  const err=document.getElementById('entry-error');
+  if(!name){err.textContent='⚠  Please enter your player name';document.getElementById('inp-name').focus();return;}
+  if(name.length<2){err.textContent='⚠  Name must be at least 2 characters';return;}
+  err.textContent='';
+  playerName=name;startingLevel=selectedDiff;
+  startAiOnLaunch=document.getElementById('ai-toggle-entry').checked;
+  const es=document.getElementById('entry-screen');
+  es.style.animation='fadeOut 0.35s ease forwards';
+  setTimeout(()=>{
+    es.style.display='none';
+    document.getElementById('game-screen').style.display='block';
+    document.getElementById('welcome-badge').style.display='block';
+    document.getElementById('badge-name').textContent=playerName;
+    initGame();
+  },350);
+}
+document.getElementById('inp-name').addEventListener('keydown',e=>{if(e.key==='Enter')enterGame();});
+ 
+function goBack(){
+  clearInterval(gameLoop);clearInterval(aiLoop);
+  running=false;clearHint();hideMoves();
+  document.getElementById('game-screen').style.display='none';
+  document.getElementById('welcome-badge').style.display='none';
+  const es=document.getElementById('entry-screen');
+  es.style.animation='fadeIn 0.4s ease';es.style.display='block';
+}
+ 
+// ══════════════════════════════════════════
+// CONSTANTS
+// ══════════════════════════════════════════
+const COLS=10,ROWS=20,BLOCK=24;
+const COLORS=['','#E84040','#E89A00','#E8D400','#40C456','#40B4E8','#4060E8','#C040E8'];
+const PIECES=[
+  null,
+  [[1,1,1,1]],
+  [[2,0],[2,0],[2,2]],
+  [[0,3],[0,3],[3,3]],
+  [[4,4],[4,4]],
+  [[0,5,5],[5,5,0]],
+  [[6,6,0],[0,6,6]],
+  [[0,7,0],[7,7,7]]
+];
+ 
+const canvas=document.getElementById('board');
+const ctx=canvas.getContext('2d');
+const pCanvas=document.getElementById('preview');
+const pCtx=pCanvas.getContext('2d');
+const overlay=document.getElementById('overlay');
+const oTitle=document.getElementById('overlay-title');
+const oSub=document.getElementById('overlay-sub');
+ 
+let playerName='Player',startingLevel=1,startAiOnLaunch=false;
+let board,piece,pieceX,pieceY,pieceType,nextType;
+let score,lines,level;
+let gameLoop,paused,running;
+ 
+// AI
+let aiEnabled=false,aiLoop=null,aiMoveCount=0,aiMpsTimer=0;
+let aiTarget=null,aiPhase='think';
+ 
+// ══════════════════════════════════════════
+// BOARD / UTILS
+// ══════════════════════════════════════════
+function newBoard(){return Array.from({length:ROWS},()=>new Array(COLS).fill(0));}
+function randPiece(){return Math.floor(Math.random()*7)+1;}
+function cloneBoard(b){return b.map(r=>r.slice());}
+function rotateMatrix(p){return p[0].map((_,i)=>p.map(r=>r[i]).reverse());}
+function allRotations(p){
+  const rots=[],seen=new Set();let cur=p;
+  for(let i=0;i<4;i++){const k=cur.flat().join(',');if(!seen.has(k)){seen.add(k);rots.push(cur);}cur=rotateMatrix(cur);}
+  return rots;
+}
+ 
+// ══════════════════════════════════════════
+// AI ENGINE — Greedy Heuristic
+// ══════════════════════════════════════════
+const W={holes:-0.72,height:-0.51,bumpiness:-0.18,lines:0.76};
+ 
+function evaluateBoard(b){
+  const heights=new Array(COLS).fill(0);
+  for(let c=0;c<COLS;c++)for(let r=0;r<ROWS;r++)if(b[r][c]){heights[c]=ROWS-r;break;}
+  const aggH=heights.reduce((a,h)=>a+h,0);
+  let holes=0;
+  for(let c=0;c<COLS;c++){let bl=false;for(let r=0;r<ROWS;r++){if(b[r][c])bl=true;else if(bl)holes++;}}
+  let bump=0;
+  for(let c=0;c<COLS-1;c++)bump+=Math.abs(heights[c]-heights[c+1]);
+  let lns=0;
+  for(let r=0;r<ROWS;r++)if(b[r].every(c=>c))lns++;
+  return W.holes*holes+W.height*aggH+W.bumpiness*bump+W.lines*lns;
+}
+ 
+function lockPieceOnBoard(p,px,py,b){
+  p.forEach((row,dr)=>row.forEach((v,dc)=>{if(v)b[py+dr][px+dc]=1;}));
+  let cleared=0;
+  for(let r=ROWS-1;r>=0;r--){
+    if(b[r].every(c=>c)){b.splice(r,1);b.unshift(new Array(COLS).fill(0));cleared++;r++;}
+  }
+  return cleared;
+}
+ 
+/** Returns all legal moves sorted by score descending.
+ *  Each entry: { rot, rotIdx, col, y, score, lines, piece }
+ */
+function getAllMoves(p,b){
+  const rots=allRotations(p);
+  const moves=[];
+  rots.forEach((rot,ri)=>{
+    for(let x=-2;x<COLS+2;x++){
+      if(!canPlace(rot,x,0,b))continue;
+      let y=0;while(canPlace(rot,x,y+1,b))y++;
+      const sim=cloneBoard(b);
+      const lns=lockPieceOnBoard(rot,x,y,sim);
+      const s=evaluateBoard(sim);
+      moves.push({rot,rotIdx:ri,col:x,y,score:s,lines:lns,piece:rot});
+    }
+  });
+  moves.sort((a,b)=>b.score-a.score);
+  return moves;
+}
+ 
+function findBestMove(p,b){
+  const moves=getAllMoves(p,b);
+  return moves.length>0?{rot:moves[0].rotIdx,col:moves[0].col}:{rot:0,col:0};
+}
+ 
+// ══════════════════════════════════════════
+// DRAWING
+// ══════════════════════════════════════════
+function drawBlock(c,x,y,color,size=BLOCK){
+  c.fillStyle=color;c.fillRect(x*size+1,y*size+1,size-2,size-2);
+  c.fillStyle='rgba(255,255,255,0.22)';c.fillRect(x*size+1,y*size+1,size-2,4);
+  c.fillStyle='rgba(0,0,0,0.3)';c.fillRect(x*size+1,y*size+size-5,size-2,4);
+}
+ 
+function drawBoard(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#06060f';ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle='rgba(255,255,255,0.035)';ctx.lineWidth=0.5;
+  for(let r=0;r<ROWS;r++){ctx.beginPath();ctx.moveTo(0,r*BLOCK);ctx.lineTo(COLS*BLOCK,r*BLOCK);ctx.stroke();}
+  for(let c=0;c<COLS;c++){ctx.beginPath();ctx.moveTo(c*BLOCK,0);ctx.lineTo(c*BLOCK,ROWS*BLOCK);ctx.stroke();}
+  for(let r=0;r<ROWS;r++)for(let c=0;c<COLS;c++)if(board&&board[r][c])drawBlock(ctx,c,r,COLORS[board[r][c]]);
+ 
+  if(piece){
+    let gy=pieceY;
+    while(canPlace(piece,pieceX,gy+1))gy++;
+    if(gy!==pieceY){
+      ctx.globalAlpha=0.17;
+      piece.forEach((row,dr)=>row.forEach((v,dc)=>{if(v)drawBlock(ctx,pieceX+dc,gy+dr,COLORS[pieceType]);}));
+      ctx.globalAlpha=1;
+    }
+    piece.forEach((row,dr)=>row.forEach((v,dc)=>{if(v)drawBlock(ctx,pieceX+dc,pieceY+dr,COLORS[pieceType]);}));
+  }
+ 
+  // draw move overlays (behind hint)
+  if(movesActive) drawMoveOverlays();
+  // draw hint overlay (on top)
+  if(hintActive) drawHint();
+}
+ 
+function drawPreview(){
+  pCtx.clearRect(0,0,pCanvas.width,pCanvas.height);
+  pCtx.fillStyle='#06060f';pCtx.fillRect(0,0,pCanvas.width,pCanvas.height);
+  if(!nextType)return;
+  const p=PIECES[nextType],sz=20;
+  const ox=Math.floor((pCanvas.width/sz-p[0].length)/2);
+  const oy=Math.floor((pCanvas.height/sz-p.length)/2);
+  p.forEach((row,r)=>row.forEach((v,c)=>{
+    if(v){
+      pCtx.fillStyle=COLORS[nextType];
+      pCtx.fillRect((ox+c)*sz+1,(oy+r)*sz+1,sz-2,sz-2);
+      pCtx.fillStyle='rgba(255,255,255,0.22)';
+      pCtx.fillRect((ox+c)*sz+1,(oy+r)*sz+1,sz-2,4);
+    }
+  }));
+}
+ 
+// ══════════════════════════════════════════
+// ── ALL MOVES FEATURE ─────────────────────
+// ══════════════════════════════════════════
+let movesActive   = false;
+let cachedMoves   = [];        // sorted move list
+let hoveredMove   = null;      // index into cachedMoves, for canvas highlight
+let hintAnimFrame = null;
+ 
+// Colour ramp: best=green → mid=yellow → worst=red
+function scoreColor(norm){
+  // norm 0..1 (1=best)
+  if(norm>0.66) return `rgba(45,232,130,${0.55+norm*0.35})`;
+  if(norm>0.33) return `rgba(255,214,0,${0.45+norm*0.4})`;
+  return `rgba(255,80,80,${0.35+norm*0.35})`;
+}
+ 
+function drawMoveOverlays(){
+  if(!movesActive||!cachedMoves.length)return;
+  const best =cachedMoves[0].score;
+  const worst=cachedMoves[cachedMoves.length-1].score;
+  const range=best-worst||1;
+ 
+  // Draw top-N ghost placements on the board canvas
+  const topN = Math.min(cachedMoves.length, 8);
+  cachedMoves.slice(0,topN).forEach((mv,i)=>{
+    const norm=(mv.score-worst)/range;
+    const isHovered=(i===hoveredMove);
+    const isBest=(i===0);
+    const alpha=isHovered?0.55:(isBest?0.42:Math.max(0.1,0.32-i*0.03));
+    const col=scoreColor(norm);
+ 
+    mv.piece.forEach((row,dr)=>row.forEach((v,dc)=>{
+      if(!v)return;
+      const px=(mv.col+dc)*BLOCK,py=(mv.y+dr)*BLOCK;
+      // fill
+      ctx.fillStyle=col.replace(/[\d.]+\)$/,`${alpha})`);
+      ctx.fillRect(px+1,py+1,BLOCK-2,BLOCK-2);
+      // border
+      ctx.strokeStyle=col.replace(/[\d.]+\)$/,`${Math.min(1,alpha+0.4)})`);
+      ctx.lineWidth=isBest?2:1;
+      ctx.strokeRect(px+2,py+2,BLOCK-4,BLOCK-4);
+    }));
+ 
+    // Score label above the piece (only top-3 or hovered)
+    if(i<3||isHovered){
+      const topR=mv.piece.findIndex(r=>r.some(v=>v));
+      const midC=mv.col+mv.piece[0].length/2;
+      const lx=midC*BLOCK;
+      const ly=(mv.y+topR)*BLOCK-3;
+      if(ly>8){
+        ctx.save();
+        ctx.font=`bold ${isBest?10:9}px Courier New`;
+        ctx.fillStyle=isBest?'#FFD600':'#ccc';
+        ctx.shadowColor=isBest?'#FFD600':'transparent';
+        ctx.shadowBlur=isBest?8:0;
+        ctx.textAlign='center';
+        ctx.fillText(mv.score.toFixed(1), lx, ly);
+        ctx.restore();
+      }
+    }
+  });
+}
+ 
+function buildMovesPanel(moves){
+  const list=document.getElementById('moves-list');
+  const count=document.getElementById('moves-count');
+  list.innerHTML='';
+  count.textContent=moves.length+' moves';
+ 
+  if(!moves.length){list.innerHTML='<div style="color:#555577;font-size:10px;padding:4px">No legal moves</div>';return;}
+ 
+  const best =moves[0].score;
+  const worst=moves[moves.length-1].score;
+  const range=best-worst||1;
+  const topN =Math.min(moves.length,12);
+ 
+  moves.slice(0,topN).forEach((mv,i)=>{
+    const norm=(mv.score-worst)/range;
+    const barColor=scoreColor(norm);
+    const barW=Math.round(norm*100);
+ 
+    // rank label
+    const rankClass=i===0?'best':i===1?'rank2':i===2?'rank3':'';
+    const rankText=i===0?'★':`#${i+1}`;
+ 
+    // rotation label
+    const rotLabels=['0°','90°','180°','270°'];
+    const rotLabel=rotLabels[mv.rotIdx]||`R${mv.rotIdx}`;
+ 
+    const row=document.createElement('div');
+    row.className='move-row';
+    row.title=`Col ${mv.col+1}, Rot ${rotLabel} → Score: ${mv.score.toFixed(2)}, Lines: ${mv.lines}`;
+ 
+    // colour swatch = piece colour with rotation tint
+    const swatchColor=COLORS[pieceType];
+ 
+    row.innerHTML=`
+      <div class="move-rank ${rankClass}">${rankText}</div>
+      <div class="move-swatch" style="background:${swatchColor};opacity:${0.5+norm*0.5}"></div>
+      <div class="move-bar-wrap">
+        <div class="move-bar" style="width:${barW}%;background:${barColor}"></div>
+      </div>
+      <div class="move-score" style="color:${barColor}">${mv.score.toFixed(1)}</div>
+      <div class="move-label">c${mv.col+1} ${rotLabel}${mv.lines?` +${mv.lines}L`:''}</div>
+    `;
+ 
+    // hover → highlight that move on board
+    row.addEventListener('mouseenter',()=>{hoveredMove=i;drawBoard();});
+    row.addEventListener('mouseleave',()=>{hoveredMove=null;drawBoard();});
+    // click → apply move as current ghost target (player still places)
+    row.addEventListener('click',()=>applyMoveHint(mv));
+ 
+    list.appendChild(row);
+  });
+ 
+  if(moves.length>topN){
+    const more=document.createElement('div');
+    more.style.cssText='font-size:9px;color:#333355;text-align:center;padding:4px 0;';
+    more.textContent=`+${moves.length-topN} more moves not shown`;
+    list.appendChild(more);
+  }
+}
+ 
+function applyMoveHint(mv){
+  // Set hint overlay to this chosen move (no auto-drop)
+  hintData={piece:mv.piece,x:mv.col,y:mv.y};
+  hintActive=true;
+  document.getElementById('btn-hint').classList.add('active');
+  const t=document.getElementById('hint-toast');
+  t.textContent=`📊 Showing move: col ${mv.col+1}, score ${mv.score.toFixed(1)}`;
+  t.style.display='block';t.style.animation='hintPop 0.3s ease';
+  clearTimeout(hintToastTimer);
+  hintToastTimer=setTimeout(()=>t.style.display='none',3000);
+  cancelAnimationFrame(hintAnimFrame);hintAnimate();
+}
+ 
+function toggleMoves(){
+  if(!running||paused||aiEnabled)return;
+  movesActive=!movesActive;
+  const btn=document.getElementById('btn-moves');
+  const panel=document.getElementById('moves-panel');
+  if(movesActive){
+    btn.classList.add('active');btn.textContent='📊 Hide Moves';
+    cachedMoves=getAllMoves(piece,board);
+    buildMovesPanel(cachedMoves);
+    panel.style.display='block';
+    // start animation loop for overlays
+    cancelAnimationFrame(hintAnimFrame);hintAnimate();
+  } else {
+    hideMoves();
+  }
+}
+ 
+function hideMoves(){
+  movesActive=false;hoveredMove=null;cachedMoves=[];
+  document.getElementById('btn-moves').classList.remove('active');
+  document.getElementById('btn-moves').textContent='📊 All Moves';
+  document.getElementById('moves-panel').style.display='none';
+  if(running)drawBoard();
+}
+ 
+function refreshMovesIfOpen(){
+  if(!movesActive)return;
+  cachedMoves=getAllMoves(piece,board);
+  buildMovesPanel(cachedMoves);
+}
+ 
+// ══════════════════════════════════════════
+// HINT SYSTEM
+// ══════════════════════════════════════════
+const MAX_HINTS=3;
+let hintsLeft=MAX_HINTS;
+let hintActive=false,hintData=null,hintTimer=null,hintToastTimer=null;
+ 
+function updateHintUI(){
+  const btn=document.getElementById('btn-hint');
+  const badge=document.getElementById('hint-badge');
+  const left=document.getElementById('ai-hints-left');
+  badge.textContent=hintsLeft;
+  left.textContent=hintsLeft;
+  const movBtn=document.getElementById('btn-moves');
+  if(!running||paused||aiEnabled){
+    btn.disabled=true;btn.classList.remove('active');
+    movBtn.disabled=true;
+  } else {
+    btn.disabled=(hintsLeft===0);
+    movBtn.disabled=false;
+  }
+}
+ 
+function showToast(msg,duration=3000){
+  const t=document.getElementById('hint-toast');
+  t.textContent=msg;t.style.display='block';t.style.animation='hintPop 0.3s ease';
+  clearTimeout(hintToastTimer);
+  hintToastTimer=setTimeout(()=>t.style.display='none',duration);
+}
+ 
+function requestHint(){
+  if(!running||paused||aiEnabled)return;
+  if(hintsLeft<=0){showToast('❌ No hints remaining!',2000);return;}
+  if(hintActive){clearHint();return;}
+  const rots=allRotations(piece);
+  const move=findBestMove(piece,board);
+  const targetRot=rots[move.rot];
+  let y=0;while(canPlace(targetRot,move.col,y+1))y++;
+  hintData={piece:targetRot,x:move.col,y};
+  hintActive=true;hintsLeft--;
+  document.getElementById('btn-hint').classList.add('active');
+  const colLabel=move.col+1,rotCount=move.rot;
+  const msgs=[
+    `💡 Place at column ${colLabel}${rotCount>0?' (rotate '+rotCount+'×)':''}`,
+    `💡 AI suggests column ${colLabel}${rotCount>0?' with '+rotCount+' rotation':''}`,
+    `💡 Best spot: col ${colLabel}${rotCount>0?', rotate '+rotCount+'×':' (no rotation)'}`,
+  ];
+  showToast(msgs[Math.floor(Math.random()*msgs.length)],4500);
+  clearTimeout(hintTimer);hintTimer=setTimeout(clearHint,4500);
+  updateHintUI();
+  cancelAnimationFrame(hintAnimFrame);hintAnimate();
+}
+ 
+function clearHint(){
+  hintActive=false;hintData=null;clearTimeout(hintTimer);
+  document.getElementById('btn-hint').classList.remove('active');
+  updateHintUI();if(running)drawBoard();
+}
+ 
+function drawHint(){
+  if(!hintActive||!hintData)return;
+  const{piece:hp,x:hx,y:hy}=hintData;
+  hp.forEach((row,dr)=>row.forEach((v,dc)=>{
+    if(!v)return;
+    const px=(hx+dc)*BLOCK,py=(hy+dr)*BLOCK;
+    ctx.fillStyle='rgba(255,214,0,0.18)';ctx.fillRect(px+1,py+1,BLOCK-2,BLOCK-2);
+    ctx.strokeStyle='#FFD600';ctx.lineWidth=2.5;ctx.strokeRect(px+2,py+2,BLOCK-4,BLOCK-4);
+  }));
+  // Bouncing arrow
+  const topRow=hp.findIndex(r=>r.some(v=>v));
+  const midX=(hx+hp[0].length/2)*BLOCK;
+  const arrowY=Math.max(8,(hy+topRow)*BLOCK-10);
+  const bounce=Math.sin(Date.now()/300)*5;
+  ctx.save();
+  ctx.fillStyle='#FFD600';ctx.shadowColor='#FFD600';ctx.shadowBlur=14;
+  ctx.fillRect(midX-2,arrowY+bounce-18,4,14);
+  ctx.beginPath();ctx.moveTo(midX-9,arrowY+bounce-6);ctx.lineTo(midX+9,arrowY+bounce-6);ctx.lineTo(midX,arrowY+bounce+4);ctx.closePath();ctx.fill();
+  // "AI BEST" label
+  const labelY=(hy+hp.length)*BLOCK+5;
+  if(labelY<canvas.height-5){
+    ctx.font='bold 9px Courier New';ctx.fillStyle='#FFD600';ctx.shadowBlur=8;ctx.textAlign='left';
+    ctx.fillText('AI BEST',hx*BLOCK+2,labelY+10);
+  }
+  ctx.restore();
+}
+ 
+function hintAnimate(){
+  if(!hintActive&&!movesActive){cancelAnimationFrame(hintAnimFrame);return;}
+  drawBoard();
+  hintAnimFrame=requestAnimationFrame(hintAnimate);
+}
+ 
+// ══════════════════════════════════════════
+// GAME LOGIC
+// ══════════════════════════════════════════
+function canPlace(p,x,y,b=board){
+  return p.every((row,dr)=>row.every((v,dc)=>{
+    if(!v)return true;
+    const nr=y+dr,nc=x+dc;
+    return nr>=0&&nr<ROWS&&nc>=0&&nc<COLS&&!b[nr][nc];
+  }));
+}
+ 
+function spawnPiece(){
+  pieceType=nextType||randPiece();nextType=randPiece();
+  piece=PIECES[pieceType];
+  pieceX=Math.floor(COLS/2)-Math.ceil(piece[0].length/2);pieceY=0;
+  drawPreview();clearHint();
+  if(movesActive)refreshMovesIfOpen();
+  if(!canPlace(piece,pieceX,pieceY))endGame();
+}
+ 
+function rotatePiece(){
+  const rot=rotateMatrix(piece);
+  if(canPlace(rot,pieceX,pieceY)){piece=rot;}
+  else if(canPlace(rot,pieceX-1,pieceY)){piece=rot;pieceX--;}
+  else if(canPlace(rot,pieceX+1,pieceY)){piece=rot;pieceX++;}
+}
+ 
+function lockPiece(){
+  piece.forEach((row,dr)=>row.forEach((v,dc)=>{if(v)board[pieceY+dr][pieceX+dc]=pieceType;}));
+  clearLines();spawnPiece();
+}
+ 
+function clearLines(){
+  let cleared=0;
+  for(let r=ROWS-1;r>=0;r--){
+    if(board[r].every(c=>c)){board.splice(r,1);board.unshift(new Array(COLS).fill(0));cleared++;r++;}
+  }
+  if(cleared){
+    const pts=[0,100,300,500,800];
+    score+=pts[cleared]*level;lines+=cleared;
+    level=Math.floor(lines/10)+startingLevel;
+    document.getElementById('score-val').textContent=score;
+    document.getElementById('lines-val').textContent=lines;
+    document.getElementById('level-val').textContent=level;
+  }
+}
+ 
+function tick(){
+  if(!running||paused)return;
+  if(canPlace(piece,pieceX,pieceY+1))pieceY++;
+  else lockPiece();
+  drawBoard();
+}
+ 
+function getSpeed(){return Math.max(80,800-level*70);}
+function startGameLoop(){clearInterval(gameLoop);gameLoop=setInterval(tick,getSpeed());}
+ 
+// ══════════════════════════════════════════
+// AI BOT
+// ══════════════════════════════════════════
+function aiStep(){
+  if(!running||paused||!aiEnabled)return;
+  if(aiPhase==='think'){
+    const rots=allRotations(piece);
+    const move=findBestMove(piece,board);
+    const targetRot=rots[move.rot];
+    let rotCount=0,sim=piece;
+    for(let i=0;i<4;i++){if(sim.flat().join(',')===targetRot.flat().join(','))break;sim=rotateMatrix(sim);rotCount++;}
+    aiTarget={rotationsLeft:rotCount,targetX:move.col};aiPhase='rotate';return;
+  }
+  if(aiPhase==='rotate'){
+    if(aiTarget.rotationsLeft>0){rotatePiece();aiTarget.rotationsLeft--;drawBoard();return;}
+    aiPhase='move';
+  }
+  if(aiPhase==='move'){
+    if(pieceX<aiTarget.targetX&&canPlace(piece,pieceX+1,pieceY)){pieceX++;drawBoard();return;}
+    if(pieceX>aiTarget.targetX&&canPlace(piece,pieceX-1,pieceY)){pieceX--;drawBoard();return;}
+    aiPhase='drop';
+  }
+  if(aiPhase==='drop'){
+    while(canPlace(piece,pieceX,pieceY+1))pieceY++;
+    lockPiece();drawBoard();aiMoveCount++;aiPhase='think';
+    const now=Date.now();
+    if(now-aiMpsTimer>1000){document.getElementById('ai-mps').textContent=aiMoveCount;aiMoveCount=0;aiMpsTimer=now;}
+    startGameLoop();
+  }
+}
+ 
+function startAILoop(){clearInterval(aiLoop);if(!aiEnabled)return;aiLoop=setInterval(aiStep,Number(document.getElementById('speed-slider').value));}
+document.getElementById('speed-slider').addEventListener('input',()=>{if(aiEnabled&&running)startAILoop();});
+ 
+function toggleAI(){
+  aiEnabled=!aiEnabled;
+  const btn=document.getElementById('btn-ai');
+  const lbl=document.getElementById('ai-mode-lbl');
+  const mobs=document.querySelectorAll('.mc-btn');
+  if(aiEnabled){
+    btn.textContent='🤖 AI: ON';btn.classList.add('active');
+    lbl.textContent='AI (Greedy)';aiPhase='think';aiMpsTimer=Date.now();
+    mobs.forEach(b=>b.disabled=true);
+    clearHint();hideMoves();
+    if(running&&!paused)startAILoop();
+  } else {
+    btn.textContent='🤖 AI: OFF';btn.classList.remove('active');
+    lbl.textContent='Manual';
+    document.getElementById('ai-mps').textContent='—';
+    mobs.forEach(b=>b.disabled=false);clearInterval(aiLoop);
+  }
+  updateHintUI();
+}
+ 
+// ══════════════════════════════════════════
+// GAME LIFECYCLE
+// ══════════════════════════════════════════
+function initGame(){
+  level=startingLevel;document.getElementById('level-val').textContent=level;
+  hintsLeft=MAX_HINTS;updateHintUI();drawBoard();
+  if(startAiOnLaunch&&!aiEnabled)toggleAI();
+  overlay.style.display='flex';
+  oTitle.textContent='HI, '+playerName.toUpperCase()+'!';
+  oSub.textContent='Press Start';
+}
+ 
+function startGame(){
+  board=newBoard();score=0;lines=0;level=startingLevel;
+  running=true;paused=false;aiPhase='think';
+  hintsLeft=MAX_HINTS;clearHint();hideMoves();
+  document.getElementById('score-val').textContent='0';
+  document.getElementById('lines-val').textContent='0';
+  document.getElementById('level-val').textContent=level;
+  document.getElementById('btn-pause').disabled=false;
+  document.getElementById('btn-pause').textContent='⏸ Pause';
+  overlay.style.display='none';
+  nextType=null;spawnPiece();startGameLoop();
+  if(aiEnabled){aiPhase='think';startAILoop();}
+  updateHintUI();drawBoard();
+}
+ 
+function togglePause(){
+  if(!running)return;
+  paused=!paused;
+  document.getElementById('btn-pause').textContent=paused?'▶ Resume':'⏸ Pause';
+  if(paused){
+    overlay.style.display='flex';oTitle.textContent='PAUSED';oSub.textContent='Press P to resume';
+    clearInterval(aiLoop);clearHint();hideMoves();
+  } else {
+    overlay.style.display='none';
+    if(aiEnabled){aiPhase='think';startAILoop();}
+  }
+  updateHintUI();
+}
+ 
+function endGame(){
+  running=false;clearInterval(gameLoop);clearInterval(aiLoop);clearHint();hideMoves();
+  overlay.style.display='flex';
+  oTitle.textContent='GAME OVER';
+  oSub.textContent=playerName+'  •  Score: '+score;
+  document.getElementById('btn-pause').disabled=true;
+  document.getElementById('btn-pause').textContent='⏸ Pause';
+  updateHintUI();
+}
+ 
+function hardDrop(){
+  while(canPlace(piece,pieceX,pieceY+1)){pieceY++;score+=2;}
+  lockPiece();drawBoard();
+  document.getElementById('score-val').textContent=score;
+  startGameLoop();
+}
+ 
+// ══════════════════════════════════════════
+// KEYBOARD
+// ══════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  if(e.key==='a'||e.key==='A'){toggleAI();return;}
+  if(e.key==='h'||e.key==='H'){requestHint();return;}
+  if(e.key==='m'||e.key==='M'){toggleMoves();return;}
+  if(aiEnabled)return;
+  if(!running||paused){if((e.key==='p'||e.key==='P')&&paused)togglePause();return;}
+  switch(e.key){
+    case 'ArrowLeft':  if(canPlace(piece,pieceX-1,pieceY))pieceX--;break;
+    case 'ArrowRight': if(canPlace(piece,pieceX+1,pieceY))pieceX++;break;
+    case 'ArrowDown':
+      if(canPlace(piece,pieceX,pieceY+1)){pieceY++;score++;document.getElementById('score-val').textContent=score;}break;
+    case 'ArrowUp':case 'x':case 'X':rotatePiece();break;
+    case ' ':e.preventDefault();hardDrop();return;
+    case 'p':case 'P':togglePause();return;
+  }
+  drawBoard();
+});
+ 
+// ══════════════════════════════════════════
+// MOBILE CONTROLS
+// ══════════════════════════════════════════
+document.getElementById('mc-left').onclick=()=>{if(running&&!paused&&!aiEnabled&&canPlace(piece,pieceX-1,pieceY)){pieceX--;drawBoard();}};
+document.getElementById('mc-right').onclick=()=>{if(running&&!paused&&!aiEnabled&&canPlace(piece,pieceX+1,pieceY)){pieceX++;drawBoard();}};
+document.getElementById('mc-down').onclick=()=>{if(running&&!paused&&!aiEnabled&&canPlace(piece,pieceX,pieceY+1)){pieceY++;score++;document.getElementById('score-val').textContent=score;drawBoard();}};
+document.getElementById('mc-rot').onclick=()=>{if(running&&!paused&&!aiEnabled){rotatePiece();drawBoard();}};
+document.getElementById('mc-drop').onclick=()=>{if(running&&!paused&&!aiEnabled)hardDrop();};
+ 
+setInterval(()=>{if(running&&!paused)startGameLoop();},800);
+</script>
+</body>
+</html>
